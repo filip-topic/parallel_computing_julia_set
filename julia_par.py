@@ -6,21 +6,19 @@ import argparse
 import time
 from multiprocessing import Pool, TimeoutError
 from julia_curve import c_from_group
-import multiprocess as mp
 
 # Update according to your group size and number (see TUWEL)
-GROUP_SIZE   = 2
+GROUP_SIZE = 2
 GROUP_NUMBER = 14
 
 # do not modify BENCHMARK_C
 BENCHMARK_C = complex(-0.2, -0.65)
 
 def compute_julia_set_sequential(xmin, xmax, ymin, ymax, im_width, im_height, c):
-
     zabs_max = 10
     nit_max = 300
 
-    xwidth  = xmax - xmin
+    xwidth = xmax - xmin
     yheight = ymax - ymin
 
     julia = np.zeros((im_width, im_height))
@@ -35,115 +33,58 @@ def compute_julia_set_sequential(xmin, xmax, ymin, ymax, im_width, im_height, c)
                 z = z**2 + c
                 nit += 1
             ratio = nit / nit_max
-            julia[ix,iy] = ratio
+            julia[ix, iy] = ratio
 
     return julia
 
-# this function is for computing a specific patch
-# function is almost identical to compute_julia_set_sequential() but it accounts for the fact
-# that it is computing a patch which has starting coordinates which arent necessarily 0, 0
-def compute_julia_patch(xmin, xmax, ymin, ymax, im_width, im_height, c, 
-                        x_start, y_start, patch_width, patch_height):
+def compute_patch(args):
+    x, y, patch, size, xmin, xmax, ymin, ymax, c = args
+    # calculate actual patch size (for edges,corners)
+    actual_patch_x = min(patch, size - x)
+    actual_patch_y = min(patch, size - y)
+    
+    patch_result = np.zeros((actual_patch_x, actual_patch_y))
+    
     zabs_max = 10
     nit_max = 300
-
-    xwidth  = xmax - xmin
+    xwidth = xmax - xmin
     yheight = ymax - ymin
-
-    julia = np.zeros((patch_width, patch_height))
-    for ix in range(patch_width):
-        for iy in range(patch_height):
+    
+    for ix in range(actual_patch_x):
+        for iy in range(actual_patch_y):
             nit = 0
-            # Map pixel position to a point in the complex plane
-            z = complex((ix + x_start) / im_width * xwidth + xmin,    # only difference between compute_julia_set_sequential() is this row
-                        (iy + y_start) / im_height * yheight + ymin)   # ... and this row
-            # Do the iterations
+            z = complex((x + ix) / size * xwidth + xmin,
+                        (y + iy) / size * yheight + ymin)
             while abs(z) <= zabs_max and nit < nit_max:
                 z = z**2 + c
                 nit += 1
             ratio = nit / nit_max
-            julia[ix,iy] = ratio
-
-    return julia
-
-# function for adding elements from the result_queue to the global (shared) variable (julia_set)
-def add_patch_to_whole_set(julia_set, patch, x_start, y_start):
-        julia_set[x_start:x_start+patch.shape[0], y_start:y_start+patch.shape[1]] = patch
-
+            patch_result[ix, iy] = ratio
+    
+    return x, y, patch_result
 
 def compute_julia_in_parallel(size, xmin, xmax, ymin, ymax, patch, nprocs, c):
 
-    # splitting the image into patches
-    # initializing some key variables
-    full_patches_per_row = size // patch
-    partial_patch_size = size % patch
-    partial_patches = partial_patch_size != 0
-    patch_start_positions = []
-    patch_dimensions = []
-    inputs = []
+    task_list = []
+    for x in range(0, size, patch):
+        for y in range(0, size, patch):
+            task_list.append((x, y, patch, size, xmin, xmax, ymin, ymax, c))
+    
+    # initialize
     julia_img = np.zeros((size, size))
-
-
-    # finding out if the image will have partial patches
-    if partial_patches:
-        rng = full_patches_per_row+1
-    else:
-        rng = full_patches_per_row
-
-
-    # generating start coordinates of each patch
-    # alongside
-    # generating the dimension of each patch
-    for x in range(rng):
-        for y in range(rng):
-
-            ######## PATCH START POSITIONS ############
-            x_start = x*patch
-            y_start = y*patch
-            patch_start_positions.append((x_start, y_start))
-
-            ########## PATCH DIMENSIONS #############
-            # case when patches fit perfectly in the image
-            if not partial_patches:
-                patch_width = patch
-                patch_height = patch
-            # case when we do have partial patches
-            else:
-                # case when we are at the vertical border
-                if x == rng-1:
-                    patch_width = partial_patch_size
-                #case when we are not at the vertcal border
-                else:
-                    patch_width = patch
-                # case when we are at horizontal border
-                if y == rng-1:
-                    patch_height = partial_patch_size
-                # case when we are not at the horizontal border
-                else:
-                    patch_height = patch
-            
-            # appending patch dimensions and patch sizes to the inputsw list
-            inputs.append((xmin, xmax, ymin, ymax, size, size, c,
-                           x_start, y_start,
-                           patch_width, patch_height))
-
-    pool = mp.Pool(processes = nprocs)
-    completed_patches = pool.starmap(compute_julia_patch, inputs, chunksize = 1)
-
-
-    ########## PUTTING PATCHES TOGETHER ##############
-    for i, p in enumerate(completed_patches):
-        p_start_position = patch_start_positions[i]
-        x_strt = p_start_position[0]
-        y_strt = p_start_position[1]
-        add_patch_to_whole_set(julia_img, p, x_strt, y_strt)
-
-
+    
+    with Pool(processes=nprocs) as pool:
+        results = pool.map(compute_patch, task_list, chunksize=1)
+    
+    # combine 
+    for x, y, patch_result in results:
+        actual_patch_x = patch_result.shape[0]
+        actual_patch_y = patch_result.shape[1]
+        julia_img[x:x+actual_patch_x, y:y+actual_patch_y] = patch_result
+    
     return julia_img
 
-
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--size", help="image size in pixels (square images)", type=int, default=500)
     parser.add_argument("--xmin", help="", type=float, default=-1.5)
@@ -155,11 +96,10 @@ if __name__ == "__main__":
     parser.add_argument("--patch", help="patch size in pixels (square images)", type=int, default=20)
     parser.add_argument("--nprocs", help="number of workers", type=int, default=1)
     parser.add_argument("--draw-axes", help="Whether to draw axes", action="store_true")
-    parser.add_argument("-o", default="output.png", help="output file")
+    parser.add_argument("-o", help="output file")
     parser.add_argument("--benchmark", help="Whether to execute the script with the benchmark Julia set", action="store_true")
     args = parser.parse_args()
 
-    #print(args)
     if args.group_size is not None:
         GROUP_SIZE = args.group_size
     if args.group_number is not None:
