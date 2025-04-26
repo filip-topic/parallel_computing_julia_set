@@ -98,42 +98,31 @@ def compute_julia_in_parallel(size, xmin, xmax, ymin, ymax, patch, nprocs, c):
         for y in range(rng):
 
             ######## PATCH START POSITIONS ############
-            patch_start_positions.append((x*patch, y*patch))
+            x_start = x*patch
+            y_start = y*patch
+            patch_start_positions.append((x_start, y_start))
 
             ########## PATCH DIMENSIONS #############
             # case when patches fit perfectly in the image
             if not partial_patches:
-                patch_dimensions.append((patch, patch))
+                patch_width = patch
+                patch_height = patch
             # case when we do have partial patches
             else:
                 # case when we are at the vertical border
                 if x == rng-1:
-                    partial_width = partial_patch_size
+                    patch_width = partial_patch_size
                 #case when we are not at the vertcal border
                 else:
-                    partial_width = patch
+                    patch_width = patch
                 # case when we are at horizontal border
                 if y == rng-1:
-                    partial_height = partial_patch_size
+                    patch_height = partial_patch_size
                 # case when we are not at the horizontal border
                 else:
-                    partial_height = patch
-                patch_dimensions.append((partial_width, partial_height))
-
-
-    ########### CALCULATING INPUTS ################
-    #task arguments are:
-        #xmin, xmax, ymin, ymax, im_width, im_height, c, \
-                        #x_start, y_start, patch_width, patch_height
-
-        # xmin, xmax, ymin, ymax, im_width, im_height, c are CONSTANT
-        # x_start, y_start, is different for each patch
-        # patch_width, patch_height is maybe only different for the last patch if it is not standard dimension
-    for i in range(len(patch_start_positions)):
-            x_start = patch_start_positions[i][0]
-            y_start = patch_start_positions[i][1]
-            patch_width = patch_dimensions[i][0]
-            patch_height = patch_dimensions[i][1]
+                    patch_height = patch
+            
+            # appending patch dimensions and patch sizes to the inputsw list
             inputs.append((xmin, xmax, ymin, ymax, size, size, c,
                            x_start, y_start,
                            patch_width, patch_height))
@@ -166,7 +155,7 @@ if __name__ == "__main__":
     parser.add_argument("--patch", help="patch size in pixels (square images)", type=int, default=20)
     parser.add_argument("--nprocs", help="number of workers", type=int, default=1)
     parser.add_argument("--draw-axes", help="Whether to draw axes", action="store_true")
-    parser.add_argument("-o", help="output file")
+    parser.add_argument("-o", default="output.png", help="output file")
     parser.add_argument("--benchmark", help="Whether to execute the script with the benchmark Julia set", action="store_true")
     args = parser.parse_args()
 
